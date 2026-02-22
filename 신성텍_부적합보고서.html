@@ -136,6 +136,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',san
   font-size:12px;border:1px solid rgba(255,255,255,.25);
 }
 .htag.red{background:rgba(220,38,38,.4);border-color:rgba(220,38,38,.5);}
+.htag.source-ok{background:rgba(22,163,74,.35);border-color:rgba(22,163,74,.62);}
+.htag.source-warn{background:rgba(245,158,11,.35);border-color:rgba(245,158,11,.62);}
+.htag.source-info{background:rgba(59,130,246,.28);border-color:rgba(59,130,246,.55);}
+.htag.file-name{
+  max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 .reupload-btn{
   margin-left:auto;padding:6px 14px;background:rgba(255,255,255,.2);
   border:1px solid rgba(255,255,255,.4);border-radius:8px;color:#fff;
@@ -539,6 +545,7 @@ table.report-tbl tbody tr:last-child td{border-bottom:none;}
   .upload-logo img{width:104px;}
   .report-header{padding:16px 14px;}
   .header-meta{display:none;}
+  .htag.file-name{max-width:100%;}
   .kpi-value{font-size:22px;}
   body{background-attachment:scroll;}
   .filter-grid{grid-template-columns:1fr 1fr;}
@@ -636,6 +643,8 @@ table.report-tbl tbody tr:last-child td{border-bottom:none;}
     <div class="header-tags">
       <span class="htag">📅 분석기간 : <span id="hd-tag-period">—</span></span>
       <span class="htag">🏭 관계사 : <span id="hd-tag-vendors">—</span></span>
+      <span class="htag source-info" id="hd-tag-source">ℹ 데이터소스: 확인 중</span>
+      <span class="htag file-name" id="rpt-filename">📄 파일: —</span>
       <span class="htag red">⚠ 사내 불량 <span id="hd-tag-bad">—</span>개 &nbsp;/&nbsp; 사외 부적합 <span id="hd-tag-sbad">—</span>개</span>
       <span class="htag">📊 종합 불량율 <span id="hd-tag-rate">—</span></span>
       <button class="reupload-btn" onclick="doReupload()">🔄 파일 재업로드</button>
@@ -1882,6 +1891,7 @@ let G = {
   saewaeAll: [],
   vendorMap: {},
   filename: '',
+  source: { kind: 'unknown', label: '' },
   trendMode: 'day',
   aiInsightMode: 'beginner',
   filters: {
@@ -1944,6 +1954,20 @@ function pct(a,b){ return b?((a/b)*100).toFixed(2):0; }
 function today(){
   const d=new Date();
   return `${d.getFullYear()}년 ${String(d.getMonth()+1).padStart(2,'0')}월 ${String(d.getDate()).padStart(2,'0')}일`;
+}
+
+function getSourceBadgeMeta(){
+  const kind = G?.source?.kind || 'unknown';
+  if(kind === 'default_excel'){
+    return { cls:'source-ok', text:'✅ 데이터소스: GitHub 엑셀 자동 반영' };
+  }
+  if(kind === 'uploaded_excel'){
+    return { cls:'source-ok', text:'✅ 데이터소스: 업로드 엑셀 즉시 분석' };
+  }
+  if(kind === 'default_json' || kind === 'embedded_json'){
+    return { cls:'source-warn', text:'⚠ 데이터소스: JSON 대체 데이터(엑셀 미반영)' };
+  }
+  return { cls:'source-info', text:'ℹ 데이터소스: 확인 필요' };
 }
 
 function fmtYmdLocal(d){
@@ -2629,7 +2653,7 @@ function saveEditModal(){
   renderReport();
 }
 
-function setSourceData(snRows, swRows, filename, validation){
+function setSourceData(snRows, swRows, filename, validation, sourceInfo){
   G.saenaeAll = Array.isArray(snRows)
     ? snRows.map(r => ({ ...r, _rid: r._rid || makeRid('sn') }))
     : [];
@@ -2638,6 +2662,10 @@ function setSourceData(snRows, swRows, filename, validation){
     ? swWithKeys.map(r => ({ ...r, _rid: r._rid || makeRid('sw') }))
     : [];
   G.filename = filename || '';
+  G.source = {
+    kind: sourceInfo?.kind || 'unknown',
+    label: sourceInfo?.label || '',
+  };
   G.validation = validation || { saenae: null, saewae: null };
   G.table.sn.page = 1;
   G.table.sw.page = 1;
@@ -2765,15 +2793,18 @@ async function bootstrapDefaultReport(){
         defaultWorkbook.snRows,
         defaultWorkbook.swRows,
         `${defaultWorkbook.filename} (자동 로드)`,
-        defaultWorkbook.validation
+        defaultWorkbook.validation,
+        { kind: 'default_excel', label: 'GitHub 기본 엑셀 자동 반영' }
       );
       return;
     }
 
     let aoaMap = tryParseEmbeddedDefault();
+    let fallbackKind = 'embedded_json';
     if(!aoaMap){
       document.getElementById('loading-detail').textContent='기본 데이터 파일 확인 중...';
       aoaMap = await tryFetchDefaultJson();
+      fallbackKind = 'default_json';
     }
 
     if(!aoaMap){
@@ -2797,7 +2828,13 @@ async function bootstrapDefaultReport(){
     }
 
     document.getElementById('error-box').style.display='none';
-    setSourceData(snRows, swRows, '기본 데이터(data_export.json)', validation);
+    setSourceData(
+      snRows,
+      swRows,
+      '기본 데이터(data_export.json)',
+      validation,
+      { kind: fallbackKind, label: fallbackKind === 'default_json' ? 'data_export.json 로드' : '내장 JSON 로드' }
+    );
   }catch(err){
     document.getElementById('report-screen').style.display='none';
     document.getElementById('upload-screen').style.display='flex';
@@ -2848,7 +2885,13 @@ function processFile(file){
 
       document.getElementById('loading-detail').textContent='차트 그리는 중...';
       setTimeout(()=>{
-        setSourceData(snRows, swRows, file.name, validation);
+        setSourceData(
+          snRows,
+          swRows,
+          file.name,
+          validation,
+          { kind: 'uploaded_excel', label: '사용자 업로드 엑셀 분석' }
+        );
         const inp = qs('file-input');
         if(inp) inp.value = '';
         hideLoading();
@@ -2913,8 +2956,14 @@ function fillHeader(){
   document.getElementById('hd-tag-bad').textContent=fmt(totalBad);
   document.getElementById('hd-tag-sbad').textContent=fmt(totalSwBad);
   document.getElementById('hd-tag-rate').textContent=rate;
+  const sourceBadge = document.getElementById('hd-tag-source');
+  if(sourceBadge){
+    const meta = getSourceBadgeMeta();
+    sourceBadge.className = `htag ${meta.cls}`;
+    sourceBadge.textContent = meta.text;
+  }
   const filenameBadge = document.getElementById('rpt-filename');
-  if(filenameBadge) filenameBadge.textContent='📄 '+G.filename;
+  if(filenameBadge) filenameBadge.textContent=`📄 파일: ${G.filename || '—'}`;
   document.getElementById('footer-info').textContent=`분석 기간: ${period} | 총 ${sn.length+sw.length}건 (사내 ${sn.length}건 + 사외 ${sw.length}건)`;
 }
 
