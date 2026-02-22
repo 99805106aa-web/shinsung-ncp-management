@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": 1771773133125,
+  "updatedAt": 1771773289399,
   "filename": "신성텍 부적합 현황.xlsx",
   "validation": {
     "saenae": {
@@ -481,6 +481,6 @@
   "source": {
     "kind": "uploaded_excel_synced",
     "label": "GitHub 동기화 업로드 엑셀 복원",
-    "savedAt": "2026-02-22T15:12:13.083Z"
+    "savedAt": "2026-02-22T15:14:49.355Z"
   }
 }
