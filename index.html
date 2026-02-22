@@ -1963,6 +1963,7 @@ let SW_ATTACH_DB_PROMISE = null;
 let UPLOAD_CACHE_DB_PROMISE = null;
 let REMOTE_SYNC_CFG = null;
 const REMOTE_SYNC_STATE = { lastAt: 0, lastError: '' };
+const REPORT_VISUAL_CHUNK_SIZE = 2;
 
 // ══════════════════════════════════════════
 //  전역 데이터
@@ -2006,6 +2007,7 @@ let G = {
 };
 let RID_SEQ = 1;
 const EDIT_STATE = { type: null, rid: null };
+let REPORT_RENDER_JOB_ID = 0;
 const EDIT_SCHEMA = {
   sn: [
     { key: '날짜', label: '검사일자', type: 'date' },
@@ -3392,15 +3394,42 @@ async function tryFetchDefaultJson(){
   }
 }
 
-async function bootstrapDefaultReport(){
-  showLoading('기본 분석 데이터 로드 중...');
+function preloadReportFromEmbeddedDefault(){
+  const aoaMap = tryParseEmbeddedDefault();
+  if(!aoaMap) return false;
+  const parsed = parseFromAoaMap(aoaMap);
+  const snRows = parsed.saenae || [];
+  const swRows = parsed.saewae || [];
+  const validation = parsed.validation || { saenae: null, saewae: null };
+  if(snRows.length===0 && swRows.length===0) return false;
+  document.getElementById('error-box').style.display='none';
+  setSourceData(
+    snRows,
+    swRows,
+    '기본 데이터(내장 JSON)',
+    validation,
+    {
+      kind: 'embedded_json',
+      label: '내장 JSON 즉시 로드',
+      savedAt: null,
+    }
+  );
+  return true;
+}
+
+async function bootstrapDefaultReport(options = {}){
+  const useLoadingOverlay = options.useLoadingOverlay !== false;
+  const skipEmbeddedFallback = !!options.skipEmbeddedFallback;
+  const skipDefaultWorkbook = !!options.skipDefaultWorkbook;
+  if(useLoadingOverlay) showLoading('기본 분석 데이터 로드 중...');
+  else hideLoading();
   try{
     updateSyncStatus();
     document.getElementById('loading-detail').textContent='동기화/기본 엑셀 데이터 확인 중...';
     const [remoteUpload, localUpload, defaultWorkbook] = await Promise.all([
       tryLoadUploadedReportRemote(),
       tryLoadUploadedReportCache(),
-      tryFetchDefaultWorkbook(),
+      skipDefaultWorkbook ? Promise.resolve(null) : tryFetchDefaultWorkbook(),
     ]);
 
     const cachedUpload = pickLatestUploadedCache(localUpload, remoteUpload);
@@ -3451,6 +3480,7 @@ async function bootstrapDefaultReport(){
       return;
     }
     if(applyDefaultWorkbook()) return;
+    if(skipEmbeddedFallback) return;
 
     let aoaMap = tryParseEmbeddedDefault();
     let fallbackKind = 'embedded_json';
@@ -3503,7 +3533,7 @@ async function bootstrapDefaultReport(){
     showError('초기 로딩 오류: ' + err.message);
     console.error(err);
   }finally{
-    hideLoading();
+    if(useLoadingOverlay) hideLoading();
   }
 }
 
@@ -3577,6 +3607,50 @@ function processFile(file){
 // ══════════════════════════════════════════
 //  보고서 렌더링 진입점
 // ══════════════════════════════════════════
+function scheduleReportVisualRender(){
+  const jobId = ++REPORT_RENDER_JOB_ID;
+  const tasks = [
+    renderInsights,
+    renderAiPriority,
+    renderChartVendor,
+    renderChartTypePie,
+    renderChartDaily,
+    renderPartFocusSummary,
+    renderChartPartTop,
+    renderChartItemTop,
+    renderChartVendorType,
+    renderChartSwType,
+    renderChartSwItem,
+    renderChartMonthly,
+    renderChartAction,
+    bindChartDrilldowns,
+  ];
+  const runChunk = () => {
+    if(jobId !== REPORT_RENDER_JOB_ID) return;
+    let processed = 0;
+    while(tasks.length && processed < REPORT_VISUAL_CHUNK_SIZE){
+      const fn = tasks.shift();
+      try{
+        fn();
+      }catch(err){
+        console.error('시각화 렌더링 오류:', err);
+      }
+      processed += 1;
+    }
+    if(!tasks.length) return;
+    if(typeof window.requestAnimationFrame === 'function'){
+      window.requestAnimationFrame(runChunk);
+    }else{
+      setTimeout(runChunk, 16);
+    }
+  };
+  if(typeof window.requestAnimationFrame === 'function'){
+    window.requestAnimationFrame(runChunk);
+  }else{
+    setTimeout(runChunk, 0);
+  }
+}
+
 function renderReport(){
   document.getElementById('upload-screen').style.display='none';
   document.getElementById('report-screen').style.display='block';
@@ -3590,20 +3664,7 @@ function renderReport(){
   renderPartAggTable();
   renderSaewaeTable();
   updateAiModeButtons();
-  renderInsights();
-  renderAiPriority();
-  renderChartVendor();
-  renderChartTypePie();
-  renderChartDaily();
-  renderPartFocusSummary();
-  renderChartPartTop();
-  renderChartItemTop();
-  renderChartVendorType();
-  renderChartSwType();
-  renderChartSwItem();
-  renderChartMonthly();
-  renderChartAction();
-  bindChartDrilldowns();
+  scheduleReportVisualRender();
 }
 
 // ══════════════════════════════════════════
@@ -5274,7 +5335,15 @@ function doReupload(){
   });
 })();
 
-bootstrapDefaultReport();
+function startAppBootstrap(){
+  const hasImmediateReport = preloadReportFromEmbeddedDefault();
+  bootstrapDefaultReport({
+    useLoadingOverlay: !hasImmediateReport,
+    skipEmbeddedFallback: hasImmediateReport,
+    skipDefaultWorkbook: hasImmediateReport,
+  });
+}
+setTimeout(startAppBootstrap, 0);
 </script>
 </body>
 </html>
