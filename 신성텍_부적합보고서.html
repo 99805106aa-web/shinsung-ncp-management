@@ -131,6 +131,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',san
 .header-meta strong{font-size:13px;}
 .header-divider{height:1px;background:rgba(255,255,255,.2);margin:14px 0 12px;}
 .header-tags{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+#hd-tag-source,
+#rpt-filename{display:none;}
 .htag{
   padding:4px 12px;background:rgba(255,255,255,.15);border-radius:20px;
   font-size:12px;border:1px solid rgba(255,255,255,.25);
@@ -219,6 +221,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',san
 }
 .trend-btn:hover{background:#EEF2FF;color:#1E40AF;}
 .trend-btn.active{background:#2563EB;color:#fff;}
+.part-focus-grid{
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;
+}
+.part-focus-card{
+  border:1px solid var(--border);border-radius:12px;background:#F8FAFC;
+  padding:12px;display:flex;flex-direction:column;gap:4px;
+}
+.part-focus-label{font-size:11px;color:var(--text-light);font-weight:700;}
+.part-focus-value{font-size:21px;line-height:1.2;font-weight:800;color:#0F172A;}
+.part-focus-desc{font-size:11px;color:var(--text-light);}
+.part-focus-card.warn{background:#FFF7ED;border-color:#FDBA74;}
+.part-focus-card.danger{background:#FEF2F2;border-color:#FCA5A5;}
+.part-focus-value.compact{font-size:16px;}
 .js-plotly-plot .modebar-container{
   display:block!important;
   visibility:visible!important;
@@ -229,6 +244,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',san
 #c-daily .modebar-container{
   top:-34px!important;
   right:176px!important;
+}
+#c-part-top .modebar-container{
+  top:-34px!important;
+  right:168px!important;
 }
 .js-plotly-plot .modebar{
   opacity:.92!important;
@@ -300,6 +319,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',san
 }
 @media(max-width:768px){
   #c-daily .modebar-container{
+    top:2px!important;
+    right:10px!important;
+  }
+  #c-part-top .modebar-container{
     top:2px!important;
     right:10px!important;
   }
@@ -538,6 +561,7 @@ table.report-tbl tbody tr:last-child td{border-bottom:none;}
   .main-content{padding:14px 12px 60px;}
   .kpi-grid{grid-template-columns:repeat(2,1fr);gap:8px;}
   .chart-row.col2,.chart-row.col3,.chart-row.col13{grid-template-columns:1fr;}
+  .part-focus-grid{grid-template-columns:1fr;}
   .insight-grid,.action-grid{grid-template-columns:1fr;}
   .ai-mode-row{align-items:flex-start;}
   .ai-mode-guide{width:100%;}
@@ -545,7 +569,6 @@ table.report-tbl tbody tr:last-child td{border-bottom:none;}
   .upload-logo img{width:104px;}
   .report-header{padding:16px 14px;}
   .header-meta{display:none;}
-  .htag.file-name{max-width:100%;}
   .kpi-value{font-size:22px;}
   body{background-attachment:scroll;}
   .filter-grid{grid-template-columns:1fr 1fr;}
@@ -643,11 +666,11 @@ table.report-tbl tbody tr:last-child td{border-bottom:none;}
     <div class="header-tags">
       <span class="htag">📅 분석기간 : <span id="hd-tag-period">—</span></span>
       <span class="htag">🏭 관계사 : <span id="hd-tag-vendors">—</span></span>
+      <span class="htag red">⚠ 사내 불량 <span id="hd-tag-bad">—</span>개 &nbsp;/&nbsp; 사외 부적합 <span id="hd-tag-sbad">—</span>개</span>
+      <span class="htag">📊 종합 불량율 <span id="hd-tag-rate">—</span></span>
       <span class="htag" id="hd-tag-updated">🕒 데이터 저장시간: —</span>
       <span class="htag source-info" id="hd-tag-source">ℹ 데이터소스: 확인 중</span>
       <span class="htag file-name" id="rpt-filename">📄 파일: —</span>
-      <span class="htag red">⚠ 사내 불량 <span id="hd-tag-bad">—</span>개 &nbsp;/&nbsp; 사외 부적합 <span id="hd-tag-sbad">—</span>개</span>
-      <span class="htag">📊 종합 불량율 <span id="hd-tag-rate">—</span></span>
       <button class="reupload-btn" onclick="doReupload()">🔄 파일 재업로드</button>
     </div>
   </div>
@@ -778,6 +801,42 @@ table.report-tbl tbody tr:last-child td{border-bottom:none;}
             </div>
           </div>
           <div id="c-daily" style="height:250px;"></div>
+        </div>
+      </div>
+      <div class="chart-row col13">
+        <div class="chart-box">
+          <h3>품번 리스크 요약</h3>
+          <div class="chart-sub">현재 필터 기준 품번별 핵심 지표</div>
+          <div class="part-focus-grid">
+            <div class="part-focus-card">
+              <div class="part-focus-label">분석 품번 수</div>
+              <div class="part-focus-value" id="part-focus-unique">—</div>
+              <div class="part-focus-desc">사내 데이터 기준 고유 품번</div>
+            </div>
+            <div class="part-focus-card warn">
+              <div class="part-focus-label">고위험 품번 수</div>
+              <div class="part-focus-value" id="part-focus-high">—</div>
+              <div class="part-focus-desc" id="part-focus-criteria">기준: 검사 100개 이상, 불량율 3.00% 이상</div>
+            </div>
+            <div class="part-focus-card danger">
+              <div class="part-focus-label">최고 위험 품번</div>
+              <div class="part-focus-value compact" id="part-focus-top">—</div>
+              <div class="part-focus-desc" id="part-focus-top-detail">리스크 정보 없음</div>
+            </div>
+          </div>
+        </div>
+        <div class="chart-box">
+          <div class="chart-head">
+            <div>
+              <h3 id="part-top-title">품번별 불량수량 Top 10</h3>
+              <div class="chart-sub" id="part-top-sub">품번 기준 누적 불량수량 상위 항목</div>
+            </div>
+            <div class="trend-mode" aria-label="품번 분석 지표 선택">
+              <button type="button" class="trend-btn part-mode-btn active" data-part-mode="qty" onclick="setPartChartMode('qty')">불량합계</button>
+              <button type="button" class="trend-btn part-mode-btn" data-part-mode="rate" onclick="setPartChartMode('rate')">불량율</button>
+            </div>
+          </div>
+          <div id="c-part-top" style="height:290px;"></div>
         </div>
       </div>
       <div class="chart-row col2">
@@ -1880,6 +1939,9 @@ const TYPE_BADGE = {
 const VENDOR_BADGE = {'뉴엠텍':'badge-blue','한솔아이원스':'badge-red','PSD':'badge-gray'};
 const SW_ATTACH_DB = { name:'shinsungtech_qc_local', version:1, store:'sw_action_docs' };
 const SW_ATTACH_MAX_SIZE = 20 * 1024 * 1024; // 20MB
+const PART_TOP_LIMIT = 10;
+const PART_RISK_MIN_INSPECT = 100;
+const PART_RISK_RATE_THRESHOLD = 3;
 let SW_ATTACH_DB_PROMISE = null;
 
 // ══════════════════════════════════════════
@@ -1894,6 +1956,7 @@ let G = {
   filename: '',
   source: { kind: 'unknown', label: '', savedAt: '' },
   trendMode: 'day',
+  partChartMode: 'qty',
   aiInsightMode: 'beginner',
   filters: {
     start: '',
@@ -1907,6 +1970,7 @@ let G = {
     vendor: null,
     type: null,
     item: null,
+    part: null,
   },
   table: {
     sn: { search: '', page: 1, pageSize: 50, sortKey: '날짜', sortDir: 'desc' },
@@ -2127,6 +2191,17 @@ function setTrendGranularity(mode){
   G.trendMode = mode;
   updateTrendModeButtons();
   renderChartDaily();
+}
+function updatePartModeButtons(){
+  document.querySelectorAll('.part-mode-btn[data-part-mode]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.partMode === G.partChartMode);
+  });
+}
+function setPartChartMode(mode){
+  if(!['qty','rate'].includes(mode)) return;
+  G.partChartMode = mode;
+  updatePartModeButtons();
+  renderChartPartTop();
 }
 function updateAiModeButtons(){
   document.querySelectorAll('.ai-mode-btn[data-ai-mode]').forEach(btn => {
@@ -2500,6 +2575,7 @@ function applyFilters(){
     if(G.drilldown.vendor && r.업체 !== G.drilldown.vendor) return false;
     if(G.drilldown.type && r.유형 !== G.drilldown.type) return false;
     if(G.drilldown.item && r.품명 !== G.drilldown.item) return false;
+    if(G.drilldown.part && r.품번 !== G.drilldown.part) return false;
     return true;
   });
 
@@ -2512,6 +2588,7 @@ function applyFilters(){
     if(G.drilldown.vendor && r.업체 !== G.drilldown.vendor) return false;
     if(G.drilldown.type && r.유형 !== G.drilldown.type) return false;
     if(G.drilldown.item && r.품명 !== G.drilldown.item) return false;
+    if(G.drilldown.part && r.품번 !== G.drilldown.part) return false;
     return true;
   });
 
@@ -2521,7 +2598,7 @@ function applyFilters(){
 }
 
 function resetFilters(){
-  G.drilldown = { vendor: null, type: null, item: null };
+  G.drilldown = { vendor: null, type: null, item: null, part: null };
   updateFilterOptions(true);
   G.table.sn.page = 1;
   G.table.sw.page = 1;
@@ -2563,6 +2640,7 @@ function renderDrilldownChips(){
   if(G.drilldown.vendor) items.push({ key:'vendor', label:`업체: ${G.drilldown.vendor}` });
   if(G.drilldown.type) items.push({ key:'type', label:`유형: ${G.drilldown.type}` });
   if(G.drilldown.item) items.push({ key:'item', label:`품명: ${G.drilldown.item}` });
+  if(G.drilldown.part) items.push({ key:'part', label:`품번: ${G.drilldown.part}` });
   if(!items.length){
     area.style.display = 'none';
     chips.innerHTML = '';
@@ -2586,7 +2664,7 @@ function clearDrilldown(key){
 }
 
 function clearAllDrilldown(){
-  G.drilldown = { vendor: null, type: null, item: null };
+  G.drilldown = { vendor: null, type: null, item: null, part: null };
   G.table.sn.page = 1;
   G.table.sw.page = 1;
   G.table.part.page = 1;
@@ -2947,6 +3025,7 @@ function renderReport(){
   document.getElementById('report-screen').style.display='block';
   fillHeader();
   fillKPI();
+  updatePartModeButtons();
   updateValidationBox();
   renderDrilldownChips();
   renderTable();
@@ -2958,6 +3037,8 @@ function renderReport(){
   renderChartVendor();
   renderChartTypePie();
   renderChartDaily();
+  renderPartFocusSummary();
+  renderChartPartTop();
   renderChartItemTop();
   renderChartVendorType();
   renderChartSwType();
@@ -3213,6 +3294,10 @@ function aggregatePartRows(rows){
   });
 }
 
+function getPartAggRows(){
+  return aggregatePartRows(G.saenae);
+}
+
 function renderPartAggTable(){
   const tbody = qs('tbl-part-agg-body');
   if(!tbody) return;
@@ -3220,7 +3305,7 @@ function renderPartAggTable(){
   st.search = qs('part-search')?.value || st.search || '';
   st.pageSize = Number(qs('part-page-size')?.value || st.pageSize || 30);
 
-  const allAgg = aggregatePartRows(G.saenae);
+  const allAgg = getPartAggRows();
   const keyword = String(st.search || '').trim().toLowerCase();
   const searched = keyword
     ? allAgg.filter(r =>
@@ -4132,6 +4217,114 @@ function renderChartDaily(){
 // ══════════════════════════════════════════
 //  차트4: 품목별 Top10
 // ══════════════════════════════════════════
+function renderPartFocusSummary(){
+  const uniqueEl = qs('part-focus-unique');
+  const highEl = qs('part-focus-high');
+  const criteriaEl = qs('part-focus-criteria');
+  const topEl = qs('part-focus-top');
+  const detailEl = qs('part-focus-top-detail');
+  if(!uniqueEl || !highEl || !criteriaEl || !topEl || !detailEl) return;
+
+  const agg = getPartAggRows();
+  const uniqueCnt = agg.length;
+  const highRiskRows = agg.filter(d =>
+    num(d.검사) >= PART_RISK_MIN_INSPECT &&
+    num(d.불량율) >= PART_RISK_RATE_THRESHOLD
+  );
+  const partNameMap = Object.fromEntries(agg.map(d => [String(d.품번 || '').trim(), String(d.품명 || '').trim()]));
+  const refIso = latestIsoDate(G.saenae);
+  const riskRows = buildRiskByKey(G.saenae, {
+    qtyKey:'불량',
+    baseKey:'검사',
+    groupKey:'품번',
+    refIso,
+  });
+  const topRisk = riskRows[0] || null;
+  const topPart = topRisk?.key || '—';
+  const topItem = partNameMap[topPart] || '품명 정보 없음';
+
+  uniqueEl.textContent = `${fmt(uniqueCnt)}종`;
+  highEl.textContent = `${fmt(highRiskRows.length)}종`;
+  criteriaEl.textContent = `기준: 검사 ${fmt(PART_RISK_MIN_INSPECT)}개 이상, 불량율 ${PART_RISK_RATE_THRESHOLD.toFixed(2)}% 이상`;
+
+  if(topRisk && topPart && topPart !== '—'){
+    topEl.textContent = topPart;
+    detailEl.textContent = `${topItem} | 리스크 ${topRisk.score}점 | 불량율 ${topRisk.rate.toFixed(2)}% | 불량 ${fmt(topRisk.qty)}개`;
+  } else {
+    topEl.textContent = '—';
+    detailEl.textContent = '리스크 정보 없음';
+  }
+}
+
+function renderChartPartTop(){
+  const titleEl = qs('part-top-title');
+  const subEl = qs('part-top-sub');
+  const mode = G.partChartMode === 'rate' ? 'rate' : 'qty';
+  updatePartModeButtons();
+
+  const agg = getPartAggRows();
+  const sortedRows = mode === 'rate'
+    ? agg
+      .filter(d => num(d.검사) >= PART_RISK_MIN_INSPECT)
+      .sort((a,b)=> num(b.불량율)-num(a.불량율) || num(b.불량)-num(a.불량) || num(b.검사)-num(a.검사))
+      .slice(0, PART_TOP_LIMIT)
+    : agg
+      .sort((a,b)=> num(b.불량)-num(a.불량) || num(b.건수)-num(a.건수) || num(b.검사)-num(a.검사))
+      .slice(0, PART_TOP_LIMIT);
+
+  if(titleEl) titleEl.textContent = mode === 'rate' ? '품번별 불량율 Top 10' : '품번별 불량수량 Top 10';
+  if(subEl){
+    subEl.textContent = mode === 'rate'
+      ? `품번 기준 불량율 상위 항목 (검사 ${fmt(PART_RISK_MIN_INSPECT)}개 이상)`
+      : '품번 기준 누적 불량수량 상위 항목';
+  }
+
+  if(!sortedRows.length){
+    Plotly.react('c-part-top', [], {
+      ...LAYOUT_BASE,
+      margin:{t:46,b:30,l:100,r:30},
+      annotations:[{
+        text:'표시할 품번 데이터가 없습니다.',
+        x:0.5,y:0.5,xref:'paper',yref:'paper',
+        showarrow:false,font:{size:12,color:'#6B7280'},
+      }],
+      xaxis:{visible:false,fixedrange:true},
+      yaxis:{visible:false,fixedrange:true},
+    }, CFG);
+    return;
+  }
+
+  const rows = sortedRows.slice().reverse();
+  const labels = rows.map(r => String(r.품번 || '(품번없음)'));
+  const values = rows.map(r => mode === 'rate' ? num(r.불량율) : num(r.불량));
+  const custom = rows.map(r => [
+    String(r.품명 || '—'),
+    fmt(num(r.검사)),
+    fmt(num(r.불량)),
+    Number(num(r.불량율)).toFixed(2),
+  ]);
+  const markerColor = mode === 'rate' ? '#EA580C' : '#DC2626';
+
+  Plotly.react('c-part-top', [{
+    type:'bar',
+    orientation:'h',
+    x:values,
+    y:labels,
+    customdata:custom,
+    text:values.map(v => mode === 'rate' ? `${Number(v).toFixed(2)}%` : `${fmt(v)}개`),
+    textposition:'outside',
+    marker:{color:markerColor,opacity:.88},
+    hovertemplate: mode === 'rate'
+      ? '<b>%{y}</b><br>품명: %{customdata[0]}<br>불량율: %{x:.2f}%<br>검사: %{customdata[1]}개<br>불량: %{customdata[2]}개<extra></extra>'
+      : '<b>%{y}</b><br>품명: %{customdata[0]}<br>불량수량: %{x}개<br>검사: %{customdata[1]}개<br>불량율: %{customdata[3]}%<extra></extra>',
+  }], {
+    ...LAYOUT_BASE,
+    margin:{t:46,b:30,l:118,r:64},
+    xaxis:{title: mode === 'rate' ? '불량율(%)' : '불량수량(개)',fixedrange:false},
+    yaxis:{fixedrange:false,tickfont:{size:10}},
+  }, CFG);
+}
+
 function renderChartItemTop(){
   const iMap={};
   G.saenae.forEach(d=>{ iMap[d.품명]=(iMap[d.품명]||0)+d.불량; });
@@ -4275,6 +4468,7 @@ function resetAllCharts(){
   renderChartVendor();
   renderChartTypePie();
   renderChartDaily();
+  renderChartPartTop();
   renderChartItemTop();
   renderChartVendorType();
   renderChartSwType();
@@ -4312,6 +4506,13 @@ function bindChartDrilldowns(){
     const p = ev?.points?.[0];
     if(!p) return;
     G.drilldown.item = String(p.y || '');
+    G.table.sn.page = 1; G.table.sw.page = 1; G.table.part.page = 1;
+    applyFilters(); renderReport();
+  });
+  bindPlotClick('c-part-top', (ev)=>{
+    const p = ev?.points?.[0];
+    if(!p) return;
+    G.drilldown.part = String(p.y || '');
     G.table.sn.page = 1; G.table.sw.page = 1; G.table.part.page = 1;
     applyFilters(); renderReport();
   });
@@ -4422,7 +4623,7 @@ function doReupload(){
   document.getElementById('error-box').style.display='none';
   document.getElementById('file-input').value='';
   closeEditModal();
-  G.drilldown = { vendor: null, type: null, item: null };
+  G.drilldown = { vendor: null, type: null, item: null, part: null };
   G.pendingSwAttachKey = null;
 }
 
