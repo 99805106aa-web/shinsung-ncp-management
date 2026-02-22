@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+SRC="신성텍_부적합보고서.html"
+DST="index.html"
+
+if [ ! -f "$SRC" ]; then
+  echo "[pre-commit] Skip: $SRC not found"
+  exit 0
+fi
+
+if [ ! -f "$DST" ] || ! cmp -s "$SRC" "$DST"; then
+  cp "$SRC" "$DST"
+  git add "$DST"
+  echo "[pre-commit] Synced $DST from $SRC"
+fi
