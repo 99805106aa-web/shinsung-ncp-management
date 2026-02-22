@@ -443,6 +443,9 @@ table.report-tbl tbody tr:last-child td{border-bottom:none;}
 
 /* 인쇄 */
 .print-bar{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center;}
+.sync-status{
+  font-size:11.5px;color:var(--text-light);font-weight:700;padding-left:4px;
+}
 .btn{
   display:inline-flex;align-items:center;gap:6px;
   padding:9px 18px;border:none;border-radius:8px;
@@ -684,6 +687,9 @@ table.report-tbl tbody tr:last-child td{border-bottom:none;}
       <button class="btn btn-outline" id="btn-export-sn">📥 사내 CSV</button>
       <button class="btn btn-outline" id="btn-export-sw">📥 사외 CSV</button>
       <button class="btn btn-outline" id="btn-export-kpi">📥 요약 JSON</button>
+      <button class="btn btn-outline" id="btn-sync-setup">☁ 동기화 설정</button>
+      <button class="btn btn-outline" id="btn-sync-now">☁ 지금 동기화</button>
+      <span class="sync-status" id="sync-status">동기화: 미설정</span>
     </div>
 
     <div class="filter-panel">
@@ -1940,11 +1946,23 @@ const VENDOR_BADGE = {'뉴엠텍':'badge-blue','한솔아이원스':'badge-red',
 const SW_ATTACH_DB = { name:'shinsungtech_qc_local', version:1, store:'sw_action_docs' };
 const SW_ATTACH_MAX_SIZE = 20 * 1024 * 1024; // 20MB
 const UPLOAD_CACHE_DB = { name:'shinsungtech_qc_upload_cache', version:1, store:'uploaded_report', key:'latest' };
+const REMOTE_SYNC_CFG_KEY = 'shinsungtech_qc_remote_sync_v1';
+const REMOTE_SYNC_DEFAULT = {
+  enabled: false,
+  provider: 'github',
+  owner: '99805106aa-web',
+  repo: 'shinsung-ncp-management',
+  branch: 'main',
+  path: 'cloud/uploaded_report_cache.json',
+  token: '',
+};
 const PART_TOP_LIMIT = 10;
 const PART_RISK_MIN_INSPECT = 100;
 const PART_RISK_RATE_THRESHOLD = 3;
 let SW_ATTACH_DB_PROMISE = null;
 let UPLOAD_CACHE_DB_PROMISE = null;
+let REMOTE_SYNC_CFG = null;
+const REMOTE_SYNC_STATE = { lastAt: 0, lastError: '' };
 
 // ══════════════════════════════════════════
 //  전역 데이터
@@ -2043,6 +2061,9 @@ function getSourceBadgeMeta(){
   if(kind === 'uploaded_excel'){
     return { cls:'source-ok', text:'✅ 데이터소스: 업로드 엑셀 즉시 분석' };
   }
+  if(kind === 'uploaded_excel_synced'){
+    return { cls:'source-ok', text:'✅ 데이터소스: GitHub 동기화 업로드 엑셀 복원' };
+  }
   if(kind === 'uploaded_excel_cached'){
     return { cls:'source-ok', text:'✅ 데이터소스: 로컬 저장 업로드 엑셀 복원' };
   }
@@ -2053,7 +2074,7 @@ function getSourceBadgeMeta(){
 }
 
 function isUploadedSourceKind(kind){
-  return kind === 'uploaded_excel' || kind === 'uploaded_excel_cached';
+  return kind === 'uploaded_excel' || kind === 'uploaded_excel_cached' || kind === 'uploaded_excel_synced';
 }
 
 function fmtYmdLocal(d){
@@ -2752,7 +2773,7 @@ function saveEditModal(){
   applyFilters();
   renderReport();
   if(isUploadedSourceKind(G?.source?.kind)){
-    persistUploadedReportFromState({ savedAt: new Date() });
+    persistUploadedReportFromState({ savedAt: new Date(), reason:'edit' });
   }
 }
 
@@ -2783,6 +2804,140 @@ function setSourceData(snRows, swRows, filename, validation, sourceInfo){
 
 function isUploadCacheSupported(){
   return typeof window !== 'undefined' && !!window.indexedDB;
+}
+
+function normalizeRemoteSyncConfig(cfg){
+  const raw = (cfg && typeof cfg === 'object') ? cfg : {};
+  return {
+    ...REMOTE_SYNC_DEFAULT,
+    enabled: !!raw.enabled,
+    owner: String(raw.owner || REMOTE_SYNC_DEFAULT.owner).trim(),
+    repo: String(raw.repo || REMOTE_SYNC_DEFAULT.repo).trim(),
+    branch: String(raw.branch || REMOTE_SYNC_DEFAULT.branch).trim(),
+    path: String(raw.path || REMOTE_SYNC_DEFAULT.path).trim(),
+    token: String(raw.token || '').trim(),
+  };
+}
+
+function loadRemoteSyncConfig(){
+  try{
+    const raw = localStorage.getItem(REMOTE_SYNC_CFG_KEY);
+    if(!raw) return normalizeRemoteSyncConfig(REMOTE_SYNC_DEFAULT);
+    return normalizeRemoteSyncConfig(JSON.parse(raw));
+  }catch{
+    return normalizeRemoteSyncConfig(REMOTE_SYNC_DEFAULT);
+  }
+}
+
+function saveRemoteSyncConfig(cfg){
+  REMOTE_SYNC_CFG = normalizeRemoteSyncConfig(cfg);
+  try{
+    localStorage.setItem(REMOTE_SYNC_CFG_KEY, JSON.stringify(REMOTE_SYNC_CFG));
+  }catch(err){
+    console.warn('동기화 설정 저장 실패:', err);
+  }
+  updateSyncStatus();
+  return REMOTE_SYNC_CFG;
+}
+
+function getRemoteSyncConfig(){
+  if(!REMOTE_SYNC_CFG) REMOTE_SYNC_CFG = loadRemoteSyncConfig();
+  return REMOTE_SYNC_CFG;
+}
+
+function isRemoteSyncEnabled(cfg){
+  const c = cfg || getRemoteSyncConfig();
+  return !!(c.enabled && c.owner && c.repo && c.branch && c.path);
+}
+
+function hasRemoteSyncToken(cfg){
+  const c = cfg || getRemoteSyncConfig();
+  return !!(c.token && c.token.length >= 20);
+}
+
+function encodeGitHubPath(path){
+  return String(path || '')
+    .split('/')
+    .filter(Boolean)
+    .map(seg => encodeURIComponent(seg))
+    .join('/');
+}
+
+function buildGitHubContentsApiUrl(cfg){
+  const path = encodeGitHubPath(cfg.path);
+  return `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${path}`;
+}
+
+function buildGitHubRawUrl(cfg){
+  const cleanPath = String(cfg.path || '').replace(/^\/+/, '');
+  return `https://raw.githubusercontent.com/${cfg.owner}/${cfg.repo}/${cfg.branch}/${cleanPath}`;
+}
+
+function updateSyncStatus(msg=''){
+  const el = qs('sync-status');
+  if(!el) return;
+  const cfg = getRemoteSyncConfig();
+  if(!isRemoteSyncEnabled(cfg)){
+    el.textContent = msg || '동기화: 미설정';
+    return;
+  }
+  if(REMOTE_SYNC_STATE.lastError){
+    el.textContent = msg || `동기화 오류: ${REMOTE_SYNC_STATE.lastError}`;
+    return;
+  }
+  if(REMOTE_SYNC_STATE.lastAt){
+    el.textContent = msg || `동기화 완료: ${fmtTs(REMOTE_SYNC_STATE.lastAt)}`;
+    return;
+  }
+  el.textContent = msg || '동기화: 설정됨';
+}
+
+function utf8ToBase64(txt){
+  return btoa(unescape(encodeURIComponent(String(txt || ''))));
+}
+
+async function githubGetFileMeta(cfg){
+  const url = `${buildGitHubContentsApiUrl(cfg)}?ref=${encodeURIComponent(cfg.branch)}`;
+  const headers = {
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  if(hasRemoteSyncToken(cfg)) headers.Authorization = `Bearer ${cfg.token}`;
+  const res = await fetch(url, { headers, cache:'no-store' });
+  if(res.status === 404) return null;
+  if(!res.ok){
+    throw new Error(`GitHub 메타 조회 실패 (${res.status})`);
+  }
+  return res.json();
+}
+
+async function githubPutFile(cfg, contentText, message){
+  if(!hasRemoteSyncToken(cfg)){
+    throw new Error('GitHub 토큰이 없어 서버 저장을 할 수 없습니다.');
+  }
+  const existing = await githubGetFileMeta(cfg);
+  const body = {
+    message: message || 'Update uploaded report cache',
+    content: utf8ToBase64(contentText),
+    branch: cfg.branch,
+  };
+  if(existing?.sha) body.sha = existing.sha;
+
+  const res = await fetch(buildGitHubContentsApiUrl(cfg), {
+    method:'PUT',
+    headers:{
+      'Accept':'application/vnd.github+json',
+      'Content-Type':'application/json',
+      'Authorization':`Bearer ${cfg.token}`,
+      'X-GitHub-Api-Version':'2022-11-28',
+    },
+    body: JSON.stringify(body),
+  });
+  if(!res.ok){
+    const txt = await res.text().catch(()=> '');
+    throw new Error(`GitHub 저장 실패 (${res.status})${txt ? `: ${txt.slice(0,160)}` : ''}`);
+  }
+  return res.json();
 }
 
 function openUploadCacheDb(){
@@ -2835,7 +2990,7 @@ async function saveUploadedReportCache(record){
   const payload = {
     id: UPLOAD_CACHE_DB.key,
     version: 1,
-    updatedAt: Date.now(),
+    updatedAt: Number(record?.updatedAt) || Date.now(),
     ...record,
   };
   await uploadCacheRequest('readwrite', store => store.put(payload));
@@ -2853,54 +3008,203 @@ async function clearUploadedReportCache(){
   return true;
 }
 
-async function persistUploadedReportFromState(opts={}){
-  if(!isUploadedSourceKind(G?.source?.kind)) return false;
+function buildUploadedReportCacheRecord(opts={}){
   const savedAt = toValidDate(opts.savedAt || new Date()) || new Date();
-  const record = {
+  return {
+    version: 1,
+    updatedAt: Number(opts.updatedAt) || Date.now(),
     filename: opts.filename || G.filename || '',
-    validation: G.validation || { saenae: null, saewae: null },
-    snRows: Array.isArray(G.saenaeAll) ? G.saenaeAll : [],
-    swRows: Array.isArray(G.saewaeAll) ? G.saewaeAll : [],
+    validation: opts.validation || G.validation || { saenae: null, saewae: null },
+    snRows: Array.isArray(opts.snRows) ? opts.snRows : (Array.isArray(G.saenaeAll) ? G.saenaeAll : []),
+    swRows: Array.isArray(opts.swRows) ? opts.swRows : (Array.isArray(G.saewaeAll) ? G.saewaeAll : []),
     source: {
-      kind: 'uploaded_excel_cached',
-      label: '로컬 저장 업로드 엑셀 복원',
+      kind: opts.sourceKind || 'uploaded_excel_cached',
+      label: opts.sourceLabel || '로컬 저장 업로드 엑셀 복원',
       savedAt: savedAt.toISOString(),
     },
   };
+}
+
+function normalizeUploadedCacheRecord(cached, fallbackKind='uploaded_excel_cached', fallbackLabel='로컬 저장 업로드 엑셀 복원'){
+  if(!cached || typeof cached !== 'object') return null;
+  const snRows = Array.isArray(cached.snRows) ? cached.snRows : [];
+  const swRows = Array.isArray(cached.swRows) ? ensureSaewaeAttachKeys(cached.swRows) : [];
+  if(snRows.length === 0 && swRows.length === 0) return null;
+  const sourceSavedAt = toValidDate(cached?.source?.savedAt) || toValidDate(cached.updatedAt);
+  return {
+    snRows,
+    swRows,
+    filename: cached.filename || '업로드 데이터',
+    validation: cached.validation || { saenae: null, saewae: null },
+    sourceInfo: {
+      kind: cached?.source?.kind || fallbackKind,
+      label: cached?.source?.label || fallbackLabel,
+      savedAt: sourceSavedAt || new Date(),
+    },
+    updatedAt: Number(cached.updatedAt) || (sourceSavedAt ? sourceSavedAt.getTime() : 0),
+    raw: cached,
+  };
+}
+
+async function saveUploadedReportToRemote(record, reason='auto'){
+  const cfg = getRemoteSyncConfig();
+  if(!isRemoteSyncEnabled(cfg) || !hasRemoteSyncToken(cfg)) return false;
+  const payload = {
+    ...record,
+    source: {
+      kind: 'uploaded_excel_synced',
+      label: 'GitHub 동기화 업로드 엑셀 복원',
+      savedAt: record?.source?.savedAt || new Date().toISOString(),
+    },
+  };
+  const json = JSON.stringify(payload, null, 2);
+  const msg = `[sync] upload cache ${new Date().toISOString().slice(0,19).replace('T',' ')} (${reason})`;
+  await githubPutFile(cfg, json, msg);
+  REMOTE_SYNC_STATE.lastAt = Date.now();
+  REMOTE_SYNC_STATE.lastError = '';
+  updateSyncStatus();
+  return true;
+}
+
+async function tryLoadUploadedReportRemote(){
+  const cfg = getRemoteSyncConfig();
+  if(!isRemoteSyncEnabled(cfg)) return null;
+  try{
+    const res = await fetch(`${buildGitHubRawUrl(cfg)}?t=${Date.now()}`, { cache:'no-store' });
+    if(res.status === 404) return null;
+    if(!res.ok){
+      throw new Error(`원격 데이터 조회 실패 (${res.status})`);
+    }
+    const raw = await res.json();
+    const normalized = normalizeUploadedCacheRecord(
+      raw,
+      'uploaded_excel_synced',
+      'GitHub 동기화 업로드 엑셀 복원'
+    );
+    if(!normalized) return null;
+    REMOTE_SYNC_STATE.lastError = '';
+    return normalized;
+  }catch(err){
+    REMOTE_SYNC_STATE.lastError = err.message || '원격 동기화 조회 실패';
+    updateSyncStatus();
+    return null;
+  }
+}
+
+async function persistUploadedReportFromState(opts={}){
+  if(!isUploadedSourceKind(G?.source?.kind)) return false;
+  const record = buildUploadedReportCacheRecord({
+    filename: opts.filename || G.filename || '',
+    savedAt: opts.savedAt || new Date(),
+    sourceKind: 'uploaded_excel_cached',
+    sourceLabel: '로컬 저장 업로드 엑셀 복원',
+  });
   try{
     await saveUploadedReportCache(record);
-    return true;
   }catch(err){
-    console.warn('업로드 데이터 저장 실패:', err);
-    return false;
+    console.warn('업로드 데이터 로컬 저장 실패:', err);
   }
+  try{
+    await saveUploadedReportToRemote(record, opts.reason || 'auto');
+  }catch(err){
+    REMOTE_SYNC_STATE.lastError = err.message || '원격 동기화 실패';
+    updateSyncStatus();
+    console.warn('업로드 데이터 원격 저장 실패:', err);
+  }
+  return true;
 }
 
 async function tryLoadUploadedReportCache(){
   try{
     const cached = await getUploadedReportCache();
     if(!cached) return null;
-    const snRows = Array.isArray(cached.snRows) ? cached.snRows : [];
-    const swRows = Array.isArray(cached.swRows) ? ensureSaewaeAttachKeys(cached.swRows) : [];
-    if(snRows.length === 0 && swRows.length === 0){
+    const normalized = normalizeUploadedCacheRecord(
+      cached,
+      'uploaded_excel_cached',
+      '로컬 저장 업로드 엑셀 복원'
+    );
+    if(!normalized){
       await clearUploadedReportCache();
       return null;
     }
-    const sourceSavedAt = toValidDate(cached?.source?.savedAt) || toValidDate(cached.updatedAt);
-    return {
-      snRows,
-      swRows,
-      filename: cached.filename || '업로드 데이터(로컬 저장)',
-      validation: cached.validation || { saenae: null, saewae: null },
-      sourceInfo: {
-        kind: 'uploaded_excel_cached',
-        label: cached?.source?.label || '로컬 저장 업로드 엑셀 복원',
-        savedAt: sourceSavedAt || new Date(),
-      },
-    };
+    return normalized;
   }catch(err){
     console.warn('저장된 업로드 데이터 복원 실패:', err);
     return null;
+  }
+}
+
+function pickLatestUploadedCache(localCached, remoteCached){
+  if(localCached && remoteCached){
+    return (remoteCached.updatedAt > localCached.updatedAt) ? remoteCached : localCached;
+  }
+  return remoteCached || localCached || null;
+}
+
+async function setupRemoteSyncByPrompt(){
+  const cur = getRemoteSyncConfig();
+  const owner = window.prompt('GitHub owner를 입력하세요.', cur.owner);
+  if(owner === null) return;
+  const repo = window.prompt('GitHub repo를 입력하세요.', cur.repo);
+  if(repo === null) return;
+  const branch = window.prompt('동기화 branch를 입력하세요.', cur.branch);
+  if(branch === null) return;
+  const path = window.prompt('저장 파일 경로를 입력하세요. (예: cloud/uploaded_report_cache.json)', cur.path);
+  if(path === null) return;
+  const token = window.prompt('GitHub PAT(repo contents 권한)를 입력하세요. 빈값 입력 시 동기화 비활성화됩니다.', cur.token || '');
+  if(token === null) return;
+
+  const next = saveRemoteSyncConfig({
+    enabled: token.trim().length > 0,
+    owner: owner.trim(),
+    repo: repo.trim(),
+    branch: branch.trim(),
+    path: path.trim(),
+    token: token.trim(),
+  });
+  REMOTE_SYNC_STATE.lastError = '';
+  REMOTE_SYNC_STATE.lastAt = 0;
+  updateSyncStatus(next.enabled ? '동기화: 설정됨' : '동기화: 비활성화');
+
+  if(!next.enabled){
+    window.alert('원격 동기화가 비활성화되었습니다.');
+    return;
+  }
+
+  if(isUploadedSourceKind(G?.source?.kind)){
+    try{
+      await persistUploadedReportFromState({ reason:'setup' });
+      window.alert('동기화 설정이 완료되었고 현재 데이터를 서버에 저장했습니다.');
+    }catch{
+      window.alert('동기화 설정은 저장되었지만 서버 저장 테스트에 실패했습니다. 토큰 권한을 확인해 주세요.');
+    }
+  }else{
+    window.alert('동기화 설정이 완료되었습니다. 다음 업로드부터 자동 동기화됩니다.');
+  }
+}
+
+async function syncNowFromState(){
+  const cfg = getRemoteSyncConfig();
+  if(!isRemoteSyncEnabled(cfg)){
+    window.alert('동기화 설정이 필요합니다. [동기화 설정] 버튼을 먼저 눌러 주세요.');
+    return;
+  }
+  if(!hasRemoteSyncToken(cfg)){
+    window.alert('GitHub 토큰이 필요합니다. [동기화 설정]에서 토큰을 입력해 주세요.');
+    return;
+  }
+  if(!isUploadedSourceKind(G?.source?.kind)){
+    window.alert('업로드된 엑셀 데이터가 있을 때만 동기화할 수 있습니다.');
+    return;
+  }
+  showLoading('클라우드 동기화 중...');
+  try{
+    await persistUploadedReportFromState({ reason:'manual' });
+    window.alert('서버 동기화가 완료되었습니다.');
+  }catch(err){
+    window.alert('서버 동기화에 실패했습니다: ' + err.message);
+  }finally{
+    hideLoading();
   }
 }
 
@@ -3018,9 +3322,28 @@ async function tryFetchDefaultJson(){
 async function bootstrapDefaultReport(){
   showLoading('기본 분석 데이터 로드 중...');
   try{
-    document.getElementById('loading-detail').textContent='저장된 업로드 데이터 확인 중...';
-    const cachedUpload = await tryLoadUploadedReportCache();
+    updateSyncStatus();
+    document.getElementById('loading-detail').textContent='동기화/로컬 업로드 데이터 확인 중...';
+    const [remoteUpload, localUpload] = await Promise.all([
+      tryLoadUploadedReportRemote(),
+      tryLoadUploadedReportCache(),
+    ]);
+    const cachedUpload = pickLatestUploadedCache(localUpload, remoteUpload);
     if(cachedUpload){
+      if(remoteUpload && cachedUpload === remoteUpload){
+        saveUploadedReportCache({
+          ...buildUploadedReportCacheRecord({
+            filename: cachedUpload.filename,
+            validation: cachedUpload.validation,
+            snRows: cachedUpload.snRows,
+            swRows: cachedUpload.swRows,
+            savedAt: cachedUpload.sourceInfo?.savedAt,
+            sourceKind: 'uploaded_excel_synced',
+            sourceLabel: 'GitHub 동기화 업로드 엑셀 복원',
+            updatedAt: cachedUpload.updatedAt || Date.now(),
+          }),
+        }).catch(()=>{});
+      }
       document.getElementById('error-box').style.display='none';
       setSourceData(
         cachedUpload.snRows,
@@ -3153,7 +3476,7 @@ function processFile(file){
             savedAt: uploadedAt,
           }
         );
-        persistUploadedReportFromState({ filename: file.name, savedAt: uploadedAt });
+        persistUploadedReportFromState({ filename: file.name, savedAt: uploadedAt, reason:'upload' });
         const inp = qs('file-input');
         if(inp) inp.value = '';
         hideLoading();
@@ -3174,6 +3497,7 @@ function processFile(file){
 function renderReport(){
   document.getElementById('upload-screen').style.display='none';
   document.getElementById('report-screen').style.display='block';
+  updateSyncStatus();
   fillHeader();
   fillKPI();
   updatePartModeButtons();
@@ -4828,6 +5152,9 @@ function doReupload(){
   qs('btn-export-sn').addEventListener('click', ()=>exportCsv('sn'));
   qs('btn-export-sw').addEventListener('click', ()=>exportCsv('sw'));
   qs('btn-export-kpi').addEventListener('click', exportSummaryJson);
+  qs('btn-sync-setup').addEventListener('click', setupRemoteSyncByPrompt);
+  qs('btn-sync-now').addEventListener('click', syncNowFromState);
+  updateSyncStatus();
 
   document.querySelectorAll('#tbl-saenae th[data-sort]').forEach(th => {
     th.addEventListener('click', () => toggleSort('sn', th.dataset.sort));
