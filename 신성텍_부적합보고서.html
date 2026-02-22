@@ -2870,7 +2870,8 @@ function buildGitHubContentsApiUrl(cfg){
 
 function buildGitHubRawUrl(cfg){
   const cleanPath = String(cfg.path || '').replace(/^\/+/, '');
-  return `https://raw.githubusercontent.com/${cfg.owner}/${cfg.repo}/${cfg.branch}/${cleanPath}`;
+  const encodedPath = encodeGitHubPath(cleanPath);
+  return `https://raw.githubusercontent.com/${cfg.owner}/${cfg.repo}/${cfg.branch}/${encodedPath}`;
 }
 
 function updateSyncStatus(msg=''){
@@ -3273,6 +3274,76 @@ function getDefaultWorkbookCandidates(){
   return [...new Set([base, encoded, `./${base}`, `./${encoded}`])];
 }
 
+function getDefaultWorkbookRepoInfo(){
+  const cfg = getRemoteSyncConfig();
+  let owner = cfg?.owner || REMOTE_SYNC_DEFAULT.owner;
+  let repo = cfg?.repo || REMOTE_SYNC_DEFAULT.repo;
+  let branch = cfg?.branch || REMOTE_SYNC_DEFAULT.branch || 'main';
+  try{
+    const host = String(window.location?.hostname || '');
+    if(host.endsWith('.github.io')){
+      const ownerFromHost = host.replace('.github.io', '');
+      const segs = String(window.location?.pathname || '').split('/').filter(Boolean);
+      const repoFromPath = segs[0] || '';
+      if(ownerFromHost) owner = ownerFromHost;
+      if(repoFromPath) repo = repoFromPath;
+    }
+  }catch{
+    // location 접근 실패 시 기본값 유지
+  }
+  return { owner, repo, branch };
+}
+
+async function listGitHubWorkbookPaths(owner, repo, branch){
+  try{
+    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents?ref=${encodeURIComponent(branch)}`;
+    const r = await fetch(url, {
+      cache:'no-store',
+      headers:{
+        'Accept':'application/vnd.github+json',
+        'X-GitHub-Api-Version':'2022-11-28',
+      },
+    });
+    if(!r.ok) return [];
+    const arr = await r.json();
+    if(!Array.isArray(arr)) return [];
+    return arr
+      .filter(it => it && it.type === 'file' && /\.(xlsx|xlsm|xls)$/i.test(String(it.name || '')))
+      .map(it => String(it.path || it.name || '').replace(/^\/+/, ''))
+      .filter(Boolean);
+  }catch{
+    return [];
+  }
+}
+
+async function tryFetchDefaultWorkbookFromGitHub(){
+  const { owner, repo, branch } = getDefaultWorkbookRepoInfo();
+  const preferred = ['신성텍 부적합 현황.xlsx', 'data.xlsx'];
+  const listed = await listGitHubWorkbookPaths(owner, repo, branch);
+  const fromList = listed.length ? listed : [];
+  const candidates = [...new Set([...preferred, ...fromList])];
+
+  for(const path of candidates){
+    const rawUrl = `${buildGitHubRawUrl({ owner, repo, branch, path })}?t=${Date.now()}`;
+    try{
+      const r = await fetch(rawUrl, { cache:'no-store' });
+      if(!r.ok) continue;
+      const buf = await r.arrayBuffer();
+      const wb = XLSX.read(buf, { type:'array', cellDates:true });
+      const parsed = parseWorkbookSheets(wb);
+      if(parsed.snRows.length===0 && parsed.swRows.length===0) continue;
+      return {
+        ...parsed,
+        filename: toDisplayFilename(path),
+        savedAt: toValidDate(r.headers.get('last-modified')),
+      };
+    }catch{
+      // 후보 실패 시 다음 경로 진행
+    }
+  }
+  return null;
+}
+
 function toDisplayFilename(path){
   const raw = String(path || '').split('/').pop() || String(path || '');
   try{
@@ -3283,6 +3354,9 @@ function toDisplayFilename(path){
 }
 
 async function tryFetchDefaultWorkbook(){
+  const githubWorkbook = await tryFetchDefaultWorkbookFromGitHub();
+  if(githubWorkbook) return githubWorkbook;
+
   const candidates = getDefaultWorkbookCandidates();
   for(const path of candidates){
     try{
@@ -3322,12 +3396,28 @@ async function bootstrapDefaultReport(){
   showLoading('기본 분석 데이터 로드 중...');
   try{
     updateSyncStatus();
-    document.getElementById('loading-detail').textContent='동기화/로컬 업로드 데이터 확인 중...';
-    const [remoteUpload, localUpload] = await Promise.all([
+    document.getElementById('loading-detail').textContent='동기화/기본 엑셀 데이터 확인 중...';
+    const [remoteUpload, localUpload, defaultWorkbook] = await Promise.all([
       tryLoadUploadedReportRemote(),
       tryLoadUploadedReportCache(),
+      tryFetchDefaultWorkbook(),
     ]);
+
     const cachedUpload = pickLatestUploadedCache(localUpload, remoteUpload);
+
+    const applyDefaultWorkbook = () => {
+      if(!defaultWorkbook) return false;
+      document.getElementById('error-box').style.display='none';
+      setSourceData(
+        defaultWorkbook.snRows,
+        defaultWorkbook.swRows,
+        `${defaultWorkbook.filename} (자동 로드)`,
+        defaultWorkbook.validation,
+        { kind: 'default_excel', label: 'GitHub 기본 엑셀 자동 반영', savedAt: defaultWorkbook.savedAt }
+      );
+      return true;
+    };
+
     if(cachedUpload){
       if(remoteUpload && cachedUpload === remoteUpload){
         saveUploadedReportCache({
@@ -3343,6 +3433,13 @@ async function bootstrapDefaultReport(){
           }),
         }).catch(()=>{});
       }
+      if(defaultWorkbook){
+        const cachedAtTs = toValidDate(cachedUpload?.sourceInfo?.savedAt)?.getTime() || Number(cachedUpload?.updatedAt) || 0;
+        const defaultAtTs = toValidDate(defaultWorkbook?.savedAt)?.getTime() || 0;
+        if(defaultAtTs > cachedAtTs){
+          if(applyDefaultWorkbook()) return;
+        }
+      }
       document.getElementById('error-box').style.display='none';
       setSourceData(
         cachedUpload.snRows,
@@ -3353,20 +3450,7 @@ async function bootstrapDefaultReport(){
       );
       return;
     }
-
-    document.getElementById('loading-detail').textContent='기본 엑셀 파일 확인 중...';
-    const defaultWorkbook = await tryFetchDefaultWorkbook();
-    if(defaultWorkbook){
-      document.getElementById('error-box').style.display='none';
-      setSourceData(
-        defaultWorkbook.snRows,
-        defaultWorkbook.swRows,
-        `${defaultWorkbook.filename} (자동 로드)`,
-        defaultWorkbook.validation,
-        { kind: 'default_excel', label: 'GitHub 기본 엑셀 자동 반영', savedAt: defaultWorkbook.savedAt }
-      );
-      return;
-    }
+    if(applyDefaultWorkbook()) return;
 
     let aoaMap = tryParseEmbeddedDefault();
     let fallbackKind = 'embedded_json';
