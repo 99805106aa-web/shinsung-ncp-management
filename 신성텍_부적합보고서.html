@@ -643,6 +643,7 @@ table.report-tbl tbody tr:last-child td{border-bottom:none;}
     <div class="header-tags">
       <span class="htag">📅 분석기간 : <span id="hd-tag-period">—</span></span>
       <span class="htag">🏭 관계사 : <span id="hd-tag-vendors">—</span></span>
+      <span class="htag" id="hd-tag-updated">🕒 데이터 저장시간: —</span>
       <span class="htag source-info" id="hd-tag-source">ℹ 데이터소스: 확인 중</span>
       <span class="htag file-name" id="rpt-filename">📄 파일: —</span>
       <span class="htag red">⚠ 사내 불량 <span id="hd-tag-bad">—</span>개 &nbsp;/&nbsp; 사외 부적합 <span id="hd-tag-sbad">—</span>개</span>
@@ -1891,7 +1892,7 @@ let G = {
   saewaeAll: [],
   vendorMap: {},
   filename: '',
-  source: { kind: 'unknown', label: '' },
+  source: { kind: 'unknown', label: '', savedAt: '' },
   trendMode: 'day',
   aiInsightMode: 'beginner',
   filters: {
@@ -1954,6 +1955,18 @@ function pct(a,b){ return b?((a/b)*100).toFixed(2):0; }
 function today(){
   const d=new Date();
   return `${d.getFullYear()}년 ${String(d.getMonth()+1).padStart(2,'0')}월 ${String(d.getDate()).padStart(2,'0')}일`;
+}
+
+function toValidDate(value){
+  if(!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function fmtDateTimeKo(value){
+  const d = toValidDate(value);
+  if(!d) return '—';
+  return `${d.getFullYear()}년 ${String(d.getMonth()+1).padStart(2,'0')}월 ${String(d.getDate()).padStart(2,'0')}일 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
 function getSourceBadgeMeta(){
@@ -2662,9 +2675,11 @@ function setSourceData(snRows, swRows, filename, validation, sourceInfo){
     ? swWithKeys.map(r => ({ ...r, _rid: r._rid || makeRid('sw') }))
     : [];
   G.filename = filename || '';
+  const savedAt = toValidDate(sourceInfo?.savedAt);
   G.source = {
     kind: sourceInfo?.kind || 'unknown',
     label: sourceInfo?.label || '',
+    savedAt: savedAt ? savedAt.toISOString() : '',
   };
   G.validation = validation || { saenae: null, saewae: null };
   G.table.sn.page = 1;
@@ -2757,6 +2772,7 @@ async function tryFetchDefaultWorkbook(){
     try{
       const r = await fetch(path, { cache:'no-store' });
       if(!r.ok) continue;
+      const savedAt = toValidDate(r.headers.get('last-modified'));
       const buf = await r.arrayBuffer();
       const wb = XLSX.read(buf, { type:'array', cellDates:true });
       const parsed = parseWorkbookSheets(wb);
@@ -2764,6 +2780,7 @@ async function tryFetchDefaultWorkbook(){
       return {
         ...parsed,
         filename: toDisplayFilename(path),
+        savedAt,
       };
     }catch{
       // 후보 경로 실패 시 다음 경로로 진행
@@ -2776,7 +2793,10 @@ async function tryFetchDefaultJson(){
   try{
     const r = await fetch('data_export.json', {cache:'no-store'});
     if(!r.ok) return null;
-    return await r.json();
+    return {
+      data: await r.json(),
+      savedAt: toValidDate(r.headers.get('last-modified')),
+    };
   }catch{
     return null;
   }
@@ -2794,17 +2814,22 @@ async function bootstrapDefaultReport(){
         defaultWorkbook.swRows,
         `${defaultWorkbook.filename} (자동 로드)`,
         defaultWorkbook.validation,
-        { kind: 'default_excel', label: 'GitHub 기본 엑셀 자동 반영' }
+        { kind: 'default_excel', label: 'GitHub 기본 엑셀 자동 반영', savedAt: defaultWorkbook.savedAt }
       );
       return;
     }
 
     let aoaMap = tryParseEmbeddedDefault();
     let fallbackKind = 'embedded_json';
+    let fallbackSavedAt = null;
     if(!aoaMap){
       document.getElementById('loading-detail').textContent='기본 데이터 파일 확인 중...';
-      aoaMap = await tryFetchDefaultJson();
-      fallbackKind = 'default_json';
+      const defaultJson = await tryFetchDefaultJson();
+      if(defaultJson){
+        aoaMap = defaultJson.data;
+        fallbackSavedAt = defaultJson.savedAt;
+        fallbackKind = 'default_json';
+      }
     }
 
     if(!aoaMap){
@@ -2833,7 +2858,11 @@ async function bootstrapDefaultReport(){
       swRows,
       '기본 데이터(data_export.json)',
       validation,
-      { kind: fallbackKind, label: fallbackKind === 'default_json' ? 'data_export.json 로드' : '내장 JSON 로드' }
+      {
+        kind: fallbackKind,
+        label: fallbackKind === 'default_json' ? 'data_export.json 로드' : '내장 JSON 로드',
+        savedAt: fallbackSavedAt,
+      }
     );
   }catch(err){
     document.getElementById('report-screen').style.display='none';
@@ -2890,7 +2919,11 @@ function processFile(file){
           swRows,
           file.name,
           validation,
-          { kind: 'uploaded_excel', label: '사용자 업로드 엑셀 분석' }
+          {
+            kind: 'uploaded_excel',
+            label: '사용자 업로드 엑셀 분석',
+            savedAt: file.lastModified ? new Date(file.lastModified) : null,
+          }
         );
         const inp = qs('file-input');
         if(inp) inp.value = '';
@@ -2953,6 +2986,10 @@ function fillHeader(){
   document.getElementById('hd-saewae-cnt').textContent=sw.length;
   document.getElementById('hd-tag-period').textContent=period;
   document.getElementById('hd-tag-vendors').textContent=vendors.join(' · ')||'—';
+  const updatedBadge = document.getElementById('hd-tag-updated');
+  if(updatedBadge){
+    updatedBadge.textContent = `🕒 데이터 저장시간: ${fmtDateTimeKo(G?.source?.savedAt)}`;
+  }
   document.getElementById('hd-tag-bad').textContent=fmt(totalBad);
   document.getElementById('hd-tag-sbad').textContent=fmt(totalSwBad);
   document.getElementById('hd-tag-rate').textContent=rate;
