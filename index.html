@@ -3135,10 +3135,9 @@ async function tryLoadUploadedReportCache(){
 }
 
 function pickLatestUploadedCache(localCached, remoteCached){
-  if(localCached && remoteCached){
-    return (remoteCached.updatedAt > localCached.updatedAt) ? remoteCached : localCached;
-  }
-  return remoteCached || localCached || null;
+  // 서버 동기화 데이터가 있으면 항상 우선 사용
+  if(remoteCached) return remoteCached;
+  return localCached || null;
 }
 
 async function setupRemoteSyncByPrompt(){
