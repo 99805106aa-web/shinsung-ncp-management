@@ -1939,10 +1939,12 @@ const TYPE_BADGE = {
 const VENDOR_BADGE = {'뉴엠텍':'badge-blue','한솔아이원스':'badge-red','PSD':'badge-gray'};
 const SW_ATTACH_DB = { name:'shinsungtech_qc_local', version:1, store:'sw_action_docs' };
 const SW_ATTACH_MAX_SIZE = 20 * 1024 * 1024; // 20MB
+const UPLOAD_CACHE_DB = { name:'shinsungtech_qc_upload_cache', version:1, store:'uploaded_report', key:'latest' };
 const PART_TOP_LIMIT = 10;
 const PART_RISK_MIN_INSPECT = 100;
 const PART_RISK_RATE_THRESHOLD = 3;
 let SW_ATTACH_DB_PROMISE = null;
+let UPLOAD_CACHE_DB_PROMISE = null;
 
 // ══════════════════════════════════════════
 //  전역 데이터
@@ -2041,10 +2043,17 @@ function getSourceBadgeMeta(){
   if(kind === 'uploaded_excel'){
     return { cls:'source-ok', text:'✅ 데이터소스: 업로드 엑셀 즉시 분석' };
   }
+  if(kind === 'uploaded_excel_cached'){
+    return { cls:'source-ok', text:'✅ 데이터소스: 로컬 저장 업로드 엑셀 복원' };
+  }
   if(kind === 'default_json' || kind === 'embedded_json'){
     return { cls:'source-warn', text:'⚠ 데이터소스: JSON 대체 데이터(엑셀 미반영)' };
   }
   return { cls:'source-info', text:'ℹ 데이터소스: 확인 필요' };
+}
+
+function isUploadedSourceKind(kind){
+  return kind === 'uploaded_excel' || kind === 'uploaded_excel_cached';
 }
 
 function fmtYmdLocal(d){
@@ -2742,6 +2751,9 @@ function saveEditModal(){
   closeEditModal();
   applyFilters();
   renderReport();
+  if(isUploadedSourceKind(G?.source?.kind)){
+    persistUploadedReportFromState({ savedAt: new Date() });
+  }
 }
 
 function setSourceData(snRows, swRows, filename, validation, sourceInfo){
@@ -2767,6 +2779,129 @@ function setSourceData(snRows, swRows, filename, validation, sourceInfo){
   applyFilters();
   renderReport();
   refreshSwAttachMeta(true);
+}
+
+function isUploadCacheSupported(){
+  return typeof window !== 'undefined' && !!window.indexedDB;
+}
+
+function openUploadCacheDb(){
+  if(!isUploadCacheSupported()){
+    return Promise.reject(new Error('현재 브라우저는 업로드 데이터 저장을 지원하지 않습니다.'));
+  }
+  if(UPLOAD_CACHE_DB_PROMISE) return UPLOAD_CACHE_DB_PROMISE;
+  UPLOAD_CACHE_DB_PROMISE = new Promise((resolve, reject) => {
+    const req = indexedDB.open(UPLOAD_CACHE_DB.name, UPLOAD_CACHE_DB.version);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if(!db.objectStoreNames.contains(UPLOAD_CACHE_DB.store)){
+        db.createObjectStore(UPLOAD_CACHE_DB.store, { keyPath:'id' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('업로드 저장소 초기화 실패'));
+  }).catch(err => {
+    UPLOAD_CACHE_DB_PROMISE = null;
+    throw err;
+  });
+  return UPLOAD_CACHE_DB_PROMISE;
+}
+
+async function uploadCacheRequest(mode, run){
+  const db = await openUploadCacheDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(UPLOAD_CACHE_DB.store, mode);
+    const store = tx.objectStore(UPLOAD_CACHE_DB.store);
+    let req = null;
+    try{
+      req = run(store);
+    }catch(err){
+      reject(err);
+      return;
+    }
+    if(req){
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('업로드 저장소 요청 실패'));
+    }else{
+      tx.oncomplete = () => resolve(null);
+      tx.onerror = () => reject(tx.error || new Error('업로드 저장소 트랜잭션 실패'));
+      tx.onabort = () => reject(tx.error || new Error('업로드 저장소 트랜잭션 중단'));
+    }
+  });
+}
+
+async function saveUploadedReportCache(record){
+  if(!isUploadCacheSupported()) return false;
+  const payload = {
+    id: UPLOAD_CACHE_DB.key,
+    version: 1,
+    updatedAt: Date.now(),
+    ...record,
+  };
+  await uploadCacheRequest('readwrite', store => store.put(payload));
+  return true;
+}
+
+async function getUploadedReportCache(){
+  if(!isUploadCacheSupported()) return null;
+  return uploadCacheRequest('readonly', store => store.get(UPLOAD_CACHE_DB.key));
+}
+
+async function clearUploadedReportCache(){
+  if(!isUploadCacheSupported()) return false;
+  await uploadCacheRequest('readwrite', store => store.delete(UPLOAD_CACHE_DB.key));
+  return true;
+}
+
+async function persistUploadedReportFromState(opts={}){
+  if(!isUploadedSourceKind(G?.source?.kind)) return false;
+  const savedAt = toValidDate(opts.savedAt || new Date()) || new Date();
+  const record = {
+    filename: opts.filename || G.filename || '',
+    validation: G.validation || { saenae: null, saewae: null },
+    snRows: Array.isArray(G.saenaeAll) ? G.saenaeAll : [],
+    swRows: Array.isArray(G.saewaeAll) ? G.saewaeAll : [],
+    source: {
+      kind: 'uploaded_excel_cached',
+      label: '로컬 저장 업로드 엑셀 복원',
+      savedAt: savedAt.toISOString(),
+    },
+  };
+  try{
+    await saveUploadedReportCache(record);
+    return true;
+  }catch(err){
+    console.warn('업로드 데이터 저장 실패:', err);
+    return false;
+  }
+}
+
+async function tryLoadUploadedReportCache(){
+  try{
+    const cached = await getUploadedReportCache();
+    if(!cached) return null;
+    const snRows = Array.isArray(cached.snRows) ? cached.snRows : [];
+    const swRows = Array.isArray(cached.swRows) ? ensureSaewaeAttachKeys(cached.swRows) : [];
+    if(snRows.length === 0 && swRows.length === 0){
+      await clearUploadedReportCache();
+      return null;
+    }
+    const sourceSavedAt = toValidDate(cached?.source?.savedAt) || toValidDate(cached.updatedAt);
+    return {
+      snRows,
+      swRows,
+      filename: cached.filename || '업로드 데이터(로컬 저장)',
+      validation: cached.validation || { saenae: null, saewae: null },
+      sourceInfo: {
+        kind: 'uploaded_excel_cached',
+        label: cached?.source?.label || '로컬 저장 업로드 엑셀 복원',
+        savedAt: sourceSavedAt || new Date(),
+      },
+    };
+  }catch(err){
+    console.warn('저장된 업로드 데이터 복원 실패:', err);
+    return null;
+  }
 }
 
 function parseFromAoaMap(aoaMap){
@@ -2883,6 +3018,20 @@ async function tryFetchDefaultJson(){
 async function bootstrapDefaultReport(){
   showLoading('기본 분석 데이터 로드 중...');
   try{
+    document.getElementById('loading-detail').textContent='저장된 업로드 데이터 확인 중...';
+    const cachedUpload = await tryLoadUploadedReportCache();
+    if(cachedUpload){
+      document.getElementById('error-box').style.display='none';
+      setSourceData(
+        cachedUpload.snRows,
+        cachedUpload.swRows,
+        cachedUpload.filename,
+        cachedUpload.validation,
+        cachedUpload.sourceInfo
+      );
+      return;
+    }
+
     document.getElementById('loading-detail').textContent='기본 엑셀 파일 확인 중...';
     const defaultWorkbook = await tryFetchDefaultWorkbook();
     if(defaultWorkbook){
@@ -2992,6 +3141,7 @@ function processFile(file){
 
       document.getElementById('loading-detail').textContent='차트 그리는 중...';
       setTimeout(()=>{
+        const uploadedAt = new Date();
         setSourceData(
           snRows,
           swRows,
@@ -3000,9 +3150,10 @@ function processFile(file){
           {
             kind: 'uploaded_excel',
             label: '사용자 업로드 엑셀 분석',
-            savedAt: file.lastModified ? new Date(file.lastModified) : null,
+            savedAt: uploadedAt,
           }
         );
+        persistUploadedReportFromState({ filename: file.name, savedAt: uploadedAt });
         const inp = qs('file-input');
         if(inp) inp.value = '';
         hideLoading();
