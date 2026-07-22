@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd C:\\\\Users\\\\Public\\\\부적합\\\\shinsung-ncp-management-main:*)",
+      "Bash(where python3 2>/dev/null || where python 2>/dev/null || where py 2>/dev/null)",
+      "Bash(cd \"C:\\\\Users\\\\Public\\\\부적합\\\\shinsung-ncp-management-main\" && python \"C:\\\\Users\\\\QC\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python3.exe\" -c \"print\\('test'\\)\" 2>&1 || py -3 -c \"\nimport subprocess\nprint\\('py works'\\)\n\" 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\Public\\\\부적합\\\\shinsung-ncp-management-main\" && py -3 -c \"\nimport openpyxl\nwb = openpyxl.load_workbook\\('신성텍 부적합 현황.xlsx', data_only=True\\)\nprint\\('시트 목록:', wb.sheetnames\\)\n\" 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\Public\\\\부적합\\\\shinsung-ncp-management-main\" && py -3 -c \"\nimport openpyxl, sys\nsys.stdout.reconfigure\\(encoding='utf-8'\\)\nwb = openpyxl.load_workbook\\('신성텍 부적합 현황.xlsx', data_only=True\\)\nprint\\('시트 목록:', wb.sheetnames\\)\nfor sname in wb.sheetnames:\n    ws = wb[sname]\n    print\\(f'\\\\n=== {sname} ==='\\)\n    for i, row in enumerate\\(ws.iter_rows\\(min_row=1, max_row=5, values_only=True\\)\\):\n        print\\(f'  행{i+1}:', list\\(row\\)[:20]\\)\n\" 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\Public\\\\부적합\\\\shinsung-ncp-management-main\" && py -3 -c \"\nimport openpyxl, sys\nsys.stdout.reconfigure\\(encoding='utf-8'\\)\nwb = openpyxl.load_workbook\\('신성텍 부적합 현황.xlsx', data_only=True\\)\nws = wb['사외불량']\nprint\\('=== 사외불량 전체 데이터 ==='\\)\nfor i, row in enumerate\\(ws.iter_rows\\(min_row=1, values_only=True\\)\\):\n    vals = list\\(row\\)\n    if any\\(v is not None for v in vals\\):\n        print\\(f'행{i+1} \\(idx {i}\\):', vals\\)\nprint\\(\\)\nws2 = wb['사내불량']\nprint\\('=== 사내불량 헤더 ==='\\)\nfor i, row in enumerate\\(ws2.iter_rows\\(min_row=1, max_row=4, values_only=True\\)\\):\n    print\\(f'행{i+1}:', list\\(row\\)[:20]\\)\n\" 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\Public\\\\부적합\\\\shinsung-ncp-management-main\" && py -3 -c \"\nimport openpyxl, sys\nsys.stdout.reconfigure\\(encoding='utf-8'\\)\nwb = openpyxl.load_workbook\\('신성텍 부적합 현황.xlsx', data_only=True\\)\nws = wb['사외불량']\n# raw 시리얼 값 확인\nfrom openpyxl.utils.datetime import to_excel\nfor row in ws.iter_rows\\(min_row=4, max_row=9, values_only=False\\):\n    cell = row[1]  # 날짜 컬럼 \\(인덱스 1\\)\n    if cell.value:\n        serial = to_excel\\(cell.value\\) if hasattr\\(cell.value, 'year'\\) else cell.value\n        print\\(f'날짜값: {cell.value}, 타입: {type\\(cell.value\\).__name__}, 시리얼: {serial}'\\)\n\" 2>&1)",
+      "Bash(grep:*)",
+      "Bash(curl:*)",
+      "Bash(powershell:*)",
+      "Bash(cmd:*)",
+      "Bash(where python:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(netstat:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

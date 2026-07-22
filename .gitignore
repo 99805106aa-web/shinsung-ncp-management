@@ -1,0 +1,16 @@
+# Local / sync junk
+_tmp_*/
+_tmp_*.*
+_bat_*.txt
+server-err.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Large runtime attachments (keep manifest if needed)
+cloud/sw_attachments/
+cloud/public_tunnel_url.txt
+
+# Optional local secrets
+.env
+.env.*
