@@ -40,7 +40,7 @@ MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 # 보고서 캐시(JSON) 허용 최대 크기
 MAX_CACHE_BYTES  = 20 * 1024 * 1024
 # 업로드 분석 캐시 스키마 버전 (구버전 캐시와 호환 끊기)
-CACHE_SCHEMA_VERSION = 3
+CACHE_SCHEMA_VERSION = 4
 # 서버에서 허용할 첨부 파일 확장자 목록
 ALLOWED_ATTACH_EXTENSIONS = {
     ".pdf",
@@ -218,10 +218,16 @@ def normalize_cache_record(data: object) -> dict | None:
 
     sn_rows = src.get("snRows")
     sw_rows = src.get("swRows")
+    sn_all_rows = src.get("snAllRows")
+    sw_all_rows = src.get("swAllRows")
     if not isinstance(sn_rows, list):
         sn_rows = []
     if not isinstance(sw_rows, list):
         sw_rows = []
+    if not isinstance(sn_all_rows, list) or len(sn_all_rows) == 0:
+        sn_all_rows = sn_rows
+    if not isinstance(sw_all_rows, list) or len(sw_all_rows) == 0:
+        sw_all_rows = sw_rows
     if len(sn_rows) == 0 and len(sw_rows) == 0:
         return None
     schema_version = to_int(src.get("schemaVersion"), 0)
@@ -249,7 +255,9 @@ def normalize_cache_record(data: object) -> dict | None:
         "filename": str(src.get("filename") or "uploaded_data"),
         "validation": src.get("validation") if isinstance(src.get("validation"), dict) else {"saenae": None, "saewae": None},
         "snRows": sn_rows,
+        "snAllRows": sn_all_rows,
         "swRows": sw_rows,
+        "swAllRows": sw_all_rows,
         "source": {
             "kind": source_kind,
             "label": source_label,

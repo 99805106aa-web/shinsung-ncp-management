@@ -5693,7 +5693,10 @@ function clearAllDrilldown(){
 }
 
 function getRowsByType(type){
-  return type === 'sw' ? G.saewaeAll : G.saenaeAll;
+  if(type === 'sw') return G.saewaeAll;
+  // 사내 상세는 출하검사 전체(불량 0 포함)를 편집 대상으로 둔다.
+  const baseAll = Array.isArray(G.saenaeBaseAll) ? G.saenaeBaseAll : [];
+  return baseAll.length ? baseAll : G.saenaeAll;
 }
 
 function findRowByRid(type, rid){
@@ -5780,6 +5783,10 @@ function saveEditModal(){
   row.유형상세 = editedTypeMap;
   row.유형상세계 = Object.values(editedTypeMap).reduce((sum, v) => sum + num(v), 0);
   updateRowDerivedFields(row, type === 'sw');
+  if(type === 'sn' && Array.isArray(G.saenaeBaseAll)){
+    // 불량수량 변경 시 부적합 집계용 목록을 출하검사 전체에서 재동기화
+    G.saenaeAll = G.saenaeBaseAll.filter(r => num(r.불량) > 0);
+  }
   closeEditModal();
   applyFilters();
   renderReport();
@@ -7891,9 +7898,10 @@ function fillKPI(){
   document.getElementById('kpi-vendor-names').textContent=allVendors.join(' · ')||'—';
   syncMainKpiGridColumns();
 
-  const dates=sn.map(d=>d.날짜).filter(Boolean).sort();
+  // 상세 내역 건수/기간은 출하검사 전체( snBase ) 기준 — KPI 부적합 건수(sn)와 분리
+  const dates=snBase.map(d=>d.날짜).filter(Boolean).sort();
   const period=dates.length?fmtPeriodKo(dates[0], dates[dates.length-1]):'—';
-  document.getElementById('tbl-cnt-label').textContent=`전체 ${sn.length}건`;
+  document.getElementById('tbl-cnt-label').textContent=`전체 ${snBase.length}건`;
   document.getElementById('tbl-period-label').textContent=`검사기간: ${period}`;
 
   const swDates=sw.map(d=>d.날짜).filter(Boolean).sort();
@@ -8077,11 +8085,15 @@ function toggleSort(tableKey, sortKey){
 function renderTable(){
   const tbody = document.getElementById('tbl-saenae-body');
   const st = G.table.sn;
+  // 상세 내역: 출하검사 전체 로트(합격 포함). KPI/차트는 G.saenae(부적합만) 유지.
+  const snDetailRows = Array.isArray(G.saenaeBase)
+    ? G.saenaeBase
+    : (Array.isArray(G.saenae) ? G.saenae : []);
   const snMonthSelected = qs('sn-month-filter')?.value || st.monthFilter || 'all';
-  st.monthFilter = syncMonthFilterOptions('sn-month-filter', G.saenae, snMonthSelected);
+  st.monthFilter = syncMonthFilterOptions('sn-month-filter', snDetailRows, snMonthSelected);
   st.search = qs('sn-search')?.value || st.search || '';
   st.pageSize = Number(qs('sn-page-size')?.value || st.pageSize || 50);
-  const monthFiltered = filterRowsByMonth(G.saenae, st.monthFilter);
+  const monthFiltered = filterRowsByMonth(snDetailRows, st.monthFilter);
   const searched = applyTableSearch(monthFiltered, st.search, false);
   const sorted = sortRows(searched, st);
   const { total, pages, pageRows } = paginateRows(sorted, st);
